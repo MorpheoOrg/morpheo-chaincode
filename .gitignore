@@ -13,6 +13,7 @@
 # Build
 chaincode
 orchestrator
+morpheo-orchestrator-chaincode
 
 # Fabric
 chaincode-docker-devmode/myc.block
