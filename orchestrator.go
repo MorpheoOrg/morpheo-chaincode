@@ -56,7 +56,7 @@ type SmartContract struct {
 // Name is the name of the item, defined by the owner, no unicity requirement.
 // Problem is the key of the problem on the orchestrator, such as problem_uuid.
 type Item struct {
-	ObjectType     string `json:"docType"`
+	ObjectType     string `json:"objectType"`
 	StorageAddress string `json:"storageAddress"`
 	Name           string `json:"name"`
 	Problem        string `json:"problem"`
@@ -68,7 +68,7 @@ type Item struct {
 // SizeTrainDataset is the size of the batch for learning tasks.
 // TestData is the list of test data keys on the ledger.
 type Problem struct {
-	ObjectType       string   `json:"docType"`
+	ObjectType       string   `json:"objectType"`
 	StorageAddress   string   `json:"storageAddress"`
 	SizeTrainDataset int      `json:"sizeTrainDataset"`
 	TestData         []string `json:"testData"`
@@ -88,7 +88,7 @@ type Problem struct {
 // Perf is the performance on the test dataset.
 // TrainPerf and TestPerf map data keys to perf of the model on them
 type Learnuplet struct {
-	ObjectType        string             `json:"docType"`
+	ObjectType        string             `json:"objectType"`
 	Problem           map[string]string  `json:"problem"`
 	Algo              map[string]string  `json:"algo"`
 	ModelStartAddress string             `json:"modelStartAddress"`
@@ -130,23 +130,24 @@ func (s *SmartContract) Invoke(APIstub shim.ChaincodeStubInterface) sc.Response 
 	// Retrieve the requested Smart Contract function and arguments
 	function, args := APIstub.GetFunctionAndParameters()
 	// Route to the appropriate handler function to interact with the ledger appropriately
-	if function == "queryObject" {
+	switch function {
+	case "queryObject":
 		return s.queryObject(APIstub, args)
-	} else if function == "queryObjects" {
+	case "queryObjects":
 		return s.queryObjects(APIstub, args)
-	} else if function == "queryProblemItems" {
+	case "queryProblemItems":
 		return s.queryProblemItems(APIstub, args)
-	} else if function == "registerItem" {
+	case "registerItem":
 		return s.registerItem(APIstub, args)
-	} else if function == "registerProblem" {
+	case "registerProblem":
 		return s.registerProblem(APIstub, args)
-	} else if function == "queryStatusLearnuplet" {
+	case "queryStatusLearnuplet":
 		return s.queryStatusLearnuplet(APIstub, args)
-	} else if function == "queryAlgoLearnuplet" {
+	case "queryAlgoLearnuplet":
 		return s.queryAlgoLearnuplet(APIstub, args)
-	} else if function == "setUpletWorker" {
+	case "setUpletWorker":
 		return s.setUpletWorker(APIstub, args)
-	} else if function == "reportLearn" {
+	case "reportLearn":
 		return s.reportLearn(APIstub, args)
 	}
 
@@ -242,7 +243,7 @@ func (s *SmartContract) registerProblem(APIstub shim.ChaincodeStubInterface, arg
 	//       0          		1		 	         2
 	// "storageAddress", "sizeTrainDataset", "testDataAddresses"
 
-	fmt.Println("- start create problem \n")
+	fmt.Println("- start create problem")
 
 	// Clean input data
 	sizeTrainDataset, err := strconv.Atoi(args[1])
@@ -266,8 +267,7 @@ func (s *SmartContract) registerProblem(APIstub shim.ChaincodeStubInterface, arg
 	if err != nil {
 		return shim.Error(err.Error())
 	}
-	err = APIstub.PutState(problemKey, problemAsBytes)
-	if err != nil {
+	if err := APIstub.PutState(problemKey, problemAsBytes); err != nil {
 		return shim.Error(err.Error())
 	}
 	fmt.Println("- end create problem")
@@ -338,7 +338,7 @@ func storeItem(APIstub shim.ChaincodeStubInterface, itemKey string, itemType str
 func (s *SmartContract) registerItem(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
 
 	if len(args) != 4 {
-		return shim.Error("Incorrect number of arguments. Expecting 3: itemType, storage_address, problem")
+		return shim.Error("Incorrect number of arguments. Expecting 4: itemType, storage_address, problem, name")
 	}
 
 	fmt.Println("- start create " + args[0])
@@ -353,12 +353,16 @@ func (s *SmartContract) registerItem(APIstub shim.ChaincodeStubInterface, args [
 	// Create associated learnuplet
 	if args[0] == "algo" {
 		fmt.Println("-- create associated learnuplets")
-		algoLearnuplet(APIstub, itemKey, item)
+		if err := algoLearnuplet(APIstub, itemKey, item); err != nil {
+			return shim.Error("Error in algoLearnuplet: " + err.Error())
+		}
 	}
 	if args[0] == "data" {
 		fmt.Println("-- create associated learnuplets")
 		data := []string{itemKey}
-		dataLearnuplet(APIstub, data, item.Problem)
+		if err := dataLearnuplet(APIstub, data, item.Problem); err != nil {
+			return shim.Error("Error in dataLearnuplet: " + err.Error())
+		}
 	}
 	fmt.Println("- end create " + item.ObjectType)
 	return shim.Success(nil)
@@ -631,7 +635,7 @@ func getRankAlgoLearnuplet(APIstub shim.ChaincodeStubInterface, algoKey string) 
 		retrievedLearnuplet := Learnuplet{}
 		err = json.Unmarshal(value, &retrievedLearnuplet)
 		if err != nil {
-			fmt.Errorf("Problem Unmarshal %s", returnedKey)
+			err = fmt.Errorf("Error unmarshalling problem %s: %s", returnedKey, err)
 			return -1, algoAddress, modelAddress, err
 		}
 		if i == 0 {
@@ -653,7 +657,7 @@ func getRankAlgoLearnuplet(APIstub shim.ChaincodeStubInterface, algoKey string) 
 			}
 		}
 
-		fmt.Printf("- for algo %s: found last rank %s and associated model %s \n", algoKey, rank, modelAddress)
+		fmt.Printf("- for algo %s: found last rank %d and associated model %s \n", algoKey, rank, modelAddress)
 	}
 
 	return rank, algoAddress, modelAddress, nil
@@ -665,14 +669,12 @@ func getDataAddress(APIstub shim.ChaincodeStubInterface, data []string) (dataAdd
 	for _, idata := range data {
 		value, err := APIstub.GetState(idata)
 		if err != nil {
-			fmt.Errorf("%s not found", idata)
-			return dataAddresses, err
+			return dataAddresses, fmt.Errorf("Error Getting State with key %s: %s", idata, err)
 		}
 		retrievedData := Item{}
 		err = json.Unmarshal(value, &retrievedData)
 		if err != nil {
-			fmt.Errorf("Problem Unmarshal %s", idata)
-			return dataAddresses, err
+			return dataAddresses, fmt.Errorf("Error Unmarshalling data %s: %s", idata, err)
 		}
 		dataAddresses[idata] = retrievedData.StorageAddress
 	}
@@ -686,7 +688,6 @@ func createLearnuplet(
 	testData []string, problem string, problemAddress string, algo string,
 	algoAddress string, modelStartAddress string, startRank int) (err error) {
 
-	err = nil
 	nbFailLearnuplet := 0
 	var batchData []string
 	// create empty maps for performances
@@ -731,15 +732,14 @@ func createLearnuplet(
 		}
 		// Append to ledger
 		learnupletKey := "learnuplet_" + uuid.NewV4().String()
-		newLearnupletAsBytes, errL := json.Marshal(newLearnuplet)
-		if errL != nil {
-			fmt.Errorf("Problem marshaling ", learnupletKey)
+		newLearnupletAsBytes, err := json.Marshal(newLearnuplet)
+		if err != nil {
+			fmt.Printf("Error marshaling Learnuplet %s: %s", learnupletKey, err)
 			nbFailLearnuplet++
 			continue
 		}
-		err = APIstub.PutState(learnupletKey, newLearnupletAsBytes)
-		if errL != nil {
-			fmt.Errorf("Problem putting state of ", learnupletKey)
+		if err := APIstub.PutState(learnupletKey, newLearnupletAsBytes); err != nil {
+			fmt.Printf("Error putting state of Learnuplet %s: %s", learnupletKey, err)
 			nbFailLearnuplet++
 			continue
 		}
@@ -757,29 +757,26 @@ func createLearnuplet(
 	}
 
 	if nbFailLearnuplet > 0 {
-		err = &errorUplet{nbFailLearnuplet, "failure in learnuplet creation"}
+		return &errorUplet{nbFailLearnuplet, "failure in learnuplet creation"}
 	}
-	return err
+	return nil
 }
 
 // algoLearnuplet is a function to create learnuplet when new algo is registered.
 // It calls the function createLearnuplet
 func algoLearnuplet(APIstub shim.ChaincodeStubInterface, algoKey string, algo Item) error {
-
 	problem := algo.Problem
 	algoAddress := algo.StorageAddress
 
 	// Find test data
 	value, err := APIstub.GetState(problem)
 	if err != nil {
-		fmt.Errorf("%s not found", problem)
-		return err
+		return fmt.Errorf("Error in GetState with problem %s: %s", problem, err)
 	}
 	retrievedProblem := Problem{}
 	err = json.Unmarshal(value, &retrievedProblem)
 	if err != nil {
-		fmt.Errorf("Problem Unmarshal %s", problem)
-		return err
+		return fmt.Errorf("Error unmarshmalling problem %s: %s", problem, err)
 	}
 	testData := retrievedProblem.TestData
 	sizeTrainDataset := retrievedProblem.SizeTrainDataset
@@ -799,30 +796,25 @@ func algoLearnuplet(APIstub shim.ChaincodeStubInterface, algoKey string, algo It
 	sort.Strings(trainData)
 	// Create learnuplets
 	modelStartAddress := algo.StorageAddress
-	err = createLearnuplet(
+	return createLearnuplet(
 		APIstub, trainData, sizeTrainDataset, testData, problem, problemAddress,
 		algoKey, algoAddress, modelStartAddress, 0)
-	return err
 }
 
 // dataLearnuplet is a function to create learnuplet when new data is registered
 // It calls the function createLearnuplet
 func dataLearnuplet(APIstub shim.ChaincodeStubInterface, data []string, problem string) (err error) {
-
 	nbFailLearnuplet := 0
-	err = nil
 
 	// Find test data
 	value, err := APIstub.GetState(problem)
 	if err != nil {
-		fmt.Errorf("%s not found", problem)
-		return err
+		return fmt.Errorf("Error in GetState with Problem %s: %s", problem, err)
 	}
 	retrievedProblem := Problem{}
 	err = json.Unmarshal(value, &retrievedProblem)
 	if err != nil {
-		fmt.Errorf("Problem Unmarshal %s", problem)
-		return err
+		return fmt.Errorf("Error Unmarshalling problem %s: %s", problem, err)
 	}
 	testData := retrievedProblem.TestData
 	sizeTrainDataset := retrievedProblem.SizeTrainDataset
